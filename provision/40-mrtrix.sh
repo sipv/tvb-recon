@@ -23,7 +23,7 @@ memtotal=$(grep MemTotal /proc/meminfo | sed 's,\s\+,-,g' | cut -d'-' -f2)
 numprocs=$(($memtotal / (4*1024*1024) + 1))
 
 pushd mrtrix3
-    git checkout 0.3.15
+    git checkout 1755865
     ./configure -nogui
     NUMBER_OF_PROCESSORS=$numprocs ./build
 popd
