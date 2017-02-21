@@ -60,4 +60,8 @@ export MNE_ROOT=\$PREFIX/mne
 source \$MNE_ROOT/bin/mne_setup_sh
 
 export PATH=/vagrant/bin:\$PATH
+
+export FSLDIR=/usr/share/fsl/5.0
+export PATH=\${FSLDIR}/bin:\${PATH}
+source \${FSLDIR}/etc/fslconf/fsl.sh
 EOF
