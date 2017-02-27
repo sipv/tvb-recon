@@ -168,32 +168,59 @@ class tck2connectome(BaseMtrixCLI):
 
     class Flags(BaseMtrixCLI.Flags):
         out_assignments = "-out_assignments"
-        scale_length = "-scale_length"
         stat_edge = "-stat_edge"
 
-    class Assignment(metaclass=abc.ABCMeta):
-        @abc.abstractmethod
-        def to_args(self):
-            pass
-
-    class AssignmentRadialSearch(Assignment):
-        def __init__(self, radius):
-            self.radius = radius
+    class Assignment:
+        def __init__(self, suffix, *extras):
+            self.flag = '-assignment_' + suffix
+            self.extras = extras
 
         def to_args(self):
-            return ['-assignment_radial_search', self.radius]
+            return [self.flag] + list(self.extras)
 
-    class AssignmentEndVoxels(Assignment):
-        def __init__(self):
-            pass
+        @classmethod
+        def end_voxels(cls):
+            return cls('end_voxels')
+
+        @classmethod
+        def radial_search(cls, radius):
+            return cls('radial_search', str(radius))
+
+        @classmethod
+        def reverse_search(cls, max_dist):
+            return cls('reverse_search', str(max_dist))
+
+        @classmethod
+        def forward_search(cls, max_dist):
+            return cls('forward_search', str(max_dist))
+
+        @classmethod
+        def all_voxels(cls):
+            return cls('all_voxels')
+
+    class Scale:
+        def __init__(self, suffix, *extras):
+            self.flag = '-scale_' + suffix
+            self.extras = extras
 
         def to_args(self):
-            return ['-assignment_end_voxels']
+            return [self.flag] + list(self.extras)
 
-    class scale(enum.Enum):
-        length = '-scale_length'
-        invlength = '-scale_invlength'
-        invnodevol = '-scale_invnodevol'
+        @classmethod
+        def length(cls):
+            return cls('length')
+
+        @classmethod
+        def invlength(cls):
+            return cls('invlength')
+
+        @classmethod
+        def invnodevol(cls):
+            return cls('invnodevol')
+
+        @classmethod
+        def file(cls, path):
+            return cls('file', path)
 
     class stat_edge(enum.Enum):
         sum = "sum"
@@ -344,6 +371,7 @@ def run_tck2connectome(track_in: os.PathLike,
                        nodes_in: os.PathLike,
                        connectome_out: os.PathLike,
                        assignment: tck2connectome.Assignment=None,
+                       scale: tck2connectome.Scale=None,
                        stat_edge: tck2connectome.stat_edge=tck2connectome.stat_edge.sum,
                        out_assignments: os.PathLike=None
                        ):
@@ -353,6 +381,8 @@ def run_tck2connectome(track_in: os.PathLike,
     ]
     if assignment:
         args += assignment.to_args()
+    if scale:
+        args += scale.to_args()
     if out_assignments:
         args += [tck2connectome.Flags.out_assignments, out_assignments]
 
