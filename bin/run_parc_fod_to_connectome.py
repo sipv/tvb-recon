@@ -7,8 +7,8 @@ from tvb.recon.cli.runner import SimpleRunner
 
 logging.basicConfig(level=logging.INFO)
 
-parc, fod, gmwmi, ftt = sys.argv[1:]
+parc, fod, con, gmwmi, ftt = sys.argv[1:]
 runner = SimpleRunner()
-convtest = ParcFodToConnectome(parc, fod, gmwmi, ftt)
+convtest = ParcFodToConnectome(parc, fod, con, gmwmi, ftt)
 
 convtest.run(runner)
