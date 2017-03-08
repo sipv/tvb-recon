@@ -298,3 +298,7 @@ def binarize(in_file: str, out_file: str,
         args += [cmd.Flags.mask_file, mask_file]
     return args
         
+
+def mris_convert_run(in_: os.PathLike, out: os.PathLike):
+    return [mris_convert.exe, in_, out]
+
