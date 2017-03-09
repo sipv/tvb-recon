@@ -106,6 +106,15 @@ def compute_vertex_normals(number_of_vertices, vertex_triangles, triangles,
     return vert_norms
 
 
+def compute_triangle_areas(vertices, triangles):
+    """Calculates the area of triangles making up a surface."""
+    tri_u = vertices[triangles[:, 1], :] - vertices[triangles[:, 0], :]
+    tri_v = vertices[triangles[:, 2], :] - vertices[triangles[:, 0], :]
+    tri_norm = np.cross(tri_u, tri_v)
+    triangle_areas = np.sqrt(np.sum(tri_norm ** 2, axis=1)) / 2.0
+    triangle_areas = triangle_areas[:, np.newaxis]
+    return triangle_areas
+
 def compute_region_orientations(regions, vertex_normals, region_mapping):
     """Compute the orientation of given regions from vertex_normals and region mapping"""
 
@@ -118,16 +127,6 @@ def compute_region_orientations(regions, vertex_normals, region_mapping):
             average_orientation[i, :] = avg_orient / np.sqrt(np.sum(avg_orient ** 2))
 
     return average_orientation
-
-
-def compute_triangle_areas(vertices, triangles):
-    """Calculates the area of triangles making up a surface."""
-    tri_u = vertices[triangles[:, 1], :] - vertices[triangles[:, 0], :]
-    tri_v = vertices[triangles[:, 2], :] - vertices[triangles[:, 0], :]
-    tri_norm = np.cross(tri_u, tri_v)
-    triangle_areas = np.sqrt(np.sum(tri_norm ** 2, axis=1)) / 2.0
-    triangle_areas = triangle_areas[:, np.newaxis]
-    return triangle_areas
 
 
 def compute_region_areas(regions, triangle_areas, vertex_triangles, region_mapping):
@@ -144,6 +143,17 @@ def compute_region_areas(regions, triangle_areas, vertex_triangles, region_mappi
             region_surface_area[i] = triangle_areas[list(region_triangles)].sum()
 
     return region_surface_area
+
+
+def compute_region_centers(regions, vertices, region_mapping):
+
+    region_centers = np.zeros(regions.size, 3)
+    for i, k in enumerate(regions):
+        vert = vertices[region_mapping == k, :]
+        if vert:
+            region_centers[i, :] = np.mean(vert, axis=0)
+
+    return region_centers
 
 
 class SurfacesToStructuralDataset(Flow):
@@ -233,7 +243,7 @@ class SurfacesToStructuralDataset(Flow):
         return fs_to_conn_indices_mapping
 
     @staticmethod
-    def _compute_region_areas_and_orientation(surface: Surface, subcortical: bool=False):
+    def _compute_region_params(surface: Surface, subcortical: bool=False):
         verts, triangs, region_mapping = surface.vertices, surface.triangles, surface.region_mapping
 
         nverts = verts.shape[0]
@@ -249,8 +259,9 @@ class SurfacesToStructuralDataset(Flow):
         regions = np.unique(region_mapping)
         areas = compute_region_areas(regions, triangle_areas, vertex_triangles, region_mapping)
         orientations = compute_region_orientations(regions, vertex_normals, region_mapping)
+        centers = compute_region_centers(regions, verts, region_mapping)
 
-        return regions, areas, orientations
+        return regions, areas, orientations, centers
 
     def _get_subcortical_surfaces(self):
         indices_mapping = self._read_fs_to_conn_indices_mapping(FS_TO_CONN_INDICES_MAPPING_PATH)
@@ -280,18 +291,21 @@ class SurfacesToStructuralDataset(Flow):
         surf_subcort = self._get_subcortical_surfaces()
         surf_cort = self._get_cortical_surfaces(runner)
 
-        regions_subcort, areas_subcort, orients_subcort = self._compute_region_areas_and_orientation(surf_subcort, True)
-        regions_cort, areas_cort, orients_cort = self._compute_region_areas_and_orientation(surf_cort, False)
+        regions_subcort, areas_subcort, orients_subcort, centers_subcort = self._compute_region_params(surf_subcort, True)
+        regions_cort, areas_cort, orients_cort, centers_cort = self._compute_region_params(surf_cort, False)
 
         max_reg = max(np.max(regions_subcort), np.max(regions_cort))
         orientations = np.zeros(max_reg + 1, 3)
         areas = np.zeros(max_reg + 1, 1)
+        centers = np.zeros(max_reg + 1, 3)
 
         orientations[regions_subcort, :] = orients_subcort
         orientations[regions_cort, :] = orients_cort
         areas[regions_subcort] = areas_subcort
         areas[regions_cort] = areas_cort
+        centers[regions_subcort, :] = centers_subcort
+        centers[regions_cort, :] = centers_cort
 
-        dataset = StructuralDataset(orientations, areas)
+        dataset = StructuralDataset(orientations, areas, centers)
 
         log.info('complete in %0.2fs', time.time() - tic)
