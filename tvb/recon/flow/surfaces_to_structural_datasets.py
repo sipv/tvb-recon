@@ -28,6 +28,27 @@ class Surface:
         self.region_mapping = region_mapping
 
 
+class RegionIndexMapping:
+    def __init__(self, filename: os.PathLike):
+
+        self.source_indices = []
+        self.region_names = []
+        self.target_indices = []
+        self.source_to_target = {}
+        self.target_region_names = []      # Names of the regions present (i.e. with nonzero index)
+                                           # in the target, sorted by indices"
+
+        with open(filename, 'r') as f:
+            for line in f.readlines():
+                source_idx, region_name, target_idx = line.strip().split()
+                self.source_indices.append(int(source_idx))
+                self.region_names.append(region_name)
+                self.target_indices.append(int(target_idx))
+
+                self.source_to_target[int(source_idx)] = int(target_idx)
+
+        target_regions = [(idx, name) for idx, name in zip(self.target_indices, self.region_names) if idx >= 0]
+        self.target_region_names = [region[1] for region in sorted(target_regions)]
 
 
 def compute_vertex_triangles(number_of_vertices, number_of_triangles, triangles):
@@ -115,6 +136,7 @@ def compute_triangle_areas(vertices, triangles):
     triangle_areas = triangle_areas[:, np.newaxis]
     return triangle_areas
 
+
 def compute_region_orientations(regions, vertex_normals, region_mapping):
     """Compute the orientation of given regions from vertex_normals and region mapping"""
 
@@ -158,7 +180,7 @@ def compute_region_centers(regions, vertices, region_mapping):
 
 class SurfacesToStructuralDataset(Flow):
 
-    def __init__(self, cort_surf_direc: os.PathLike, subcort_surf_direc):
+    def __init__(self, cort_surf_direc: os.PathLike, subcort_surf_direc: os.PathLike, struct_zip_file: os.PathLike):
         """
 
         Parameters
@@ -172,6 +194,7 @@ class SurfacesToStructuralDataset(Flow):
         """
         self.cort_surf_direc = cort_surf_direc
         self.subcort_surf_direc = subcort_surf_direc
+        self.struct_zip_file = struct_zip_file
 
     @staticmethod
     def _pial_to_verts_and_triangs(runner: Runner, pial_surf: File) -> (np.ndarray, np.ndarray):
@@ -263,12 +286,11 @@ class SurfacesToStructuralDataset(Flow):
 
         return regions, areas, orientations, centers
 
-    def _get_subcortical_surfaces(self):
-        indices_mapping = self._read_fs_to_conn_indices_mapping(FS_TO_CONN_INDICES_MAPPING_PATH)
+    def _get_subcortical_surfaces(self, region_index_mapping: RegionIndexMapping):
         surfaces = []
 
         for fs_idx in SUBCORTICAL_REG_INDS:
-            conn_idx = indices_mapping[fs_idx]
+            conn_idx = region_index_mapping.source_to_target[fs_idx]
             filename = os.path.join(self.subcort_surf_direc, 'aseg_' + fs_idx + '.srf')
             with open(filename, 'r') as f:
                 f.readline()
@@ -288,24 +310,27 @@ class SurfacesToStructuralDataset(Flow):
         log = logging.getLogger('SurfacesToStructuralDataset')
         tic = time.time()
 
-        surf_subcort = self._get_subcortical_surfaces()
+        region_index_mapping = RegionIndexMapping(FS_TO_CONN_INDICES_MAPPING_PATH)
+
+        surf_subcort = self._get_subcortical_surfaces(region_index_mapping)
         surf_cort = self._get_cortical_surfaces(runner)
 
-        regions_subcort, areas_subcort, orients_subcort, centers_subcort = self._compute_region_params(surf_subcort, True)
-        regions_cort, areas_cort, orients_cort, centers_cort = self._compute_region_params(surf_cort, False)
+        region_params_subcort = self._compute_region_params(surf_subcort, True)
+        region_params_cort = self._compute_region_params(surf_cort, False)
 
-        max_reg = max(np.max(regions_subcort), np.max(regions_cort))
+        # TODO: Unknown region 0: include or not?
+        max_reg = max(np.max(region_params_subcort[0]), np.max(region_params_cort[0]))
         orientations = np.zeros(max_reg + 1, 3)
         areas = np.zeros(max_reg + 1, 1)
         centers = np.zeros(max_reg + 1, 3)
 
-        orientations[regions_subcort, :] = orients_subcort
-        orientations[regions_cort, :] = orients_cort
-        areas[regions_subcort] = areas_subcort
-        areas[regions_cort] = areas_cort
-        centers[regions_subcort, :] = centers_subcort
-        centers[regions_cort, :] = centers_cort
+        for region_params in [region_params_subcort, region_params_cort]:
+            regions, reg_areas, reg_orientations, reg_centers = region_params
+            orientations[regions, :] = reg_orientations
+            areas[regions] = reg_areas
+            centers[regions, :] = reg_centers
 
-        dataset = StructuralDataset(orientations, areas, centers)
+        dataset = StructuralDataset(orientations, areas, centers, region_index_mapping.target_region_names)
+        dataset.save_to_txt_zip(self.struct_zip_file)
 
         log.info('complete in %0.2fs', time.time() - tic)
