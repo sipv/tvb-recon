@@ -184,7 +184,7 @@ def compute_region_centers(regions, vertices, region_mapping):
 class SurfacesToStructuralDataset(Flow):
 
     def __init__(self, cort_surf_direc: os.PathLike, subcort_surf_direc: os.PathLike, label_direc: os.PathLike,
-                 struct_zip_file: os.PathLike):
+                 weights_file: os.PathLike, tract_lengths_file: os.PathLike, struct_zip_file: os.PathLike):
         """
 
         Parameters
@@ -198,11 +198,15 @@ class SurfacesToStructuralDataset(Flow):
         label_direc: Directory that should contain:
                        rh.aparc.annot
                        lh.aparc.annot
+        weights_file: text file with weights matrix (which should be upper triangular)
+        tract_lengths_file: text file with tract length matrix (which should be upper triangular)
         struct_zip_file: zip file containing TVB structural dataset to be created
         """
         self.cort_surf_direc = cort_surf_direc
         self.subcort_surf_direc = subcort_surf_direc
         self.label_direc = label_direc
+        self.weights_file = weights_file
+        self.tract_lenghts_file = tract_lengths_file
         self.struct_zip_file = struct_zip_file
 
     @staticmethod
@@ -347,7 +351,11 @@ class SurfacesToStructuralDataset(Flow):
             areas[regions] = reg_areas
             centers[regions, :] = reg_centers
 
-        dataset = StructuralDataset(orientations, areas, centers, region_index_mapping.target_region_names)
+        weights = np.genfromtxt(self.weights_file.__fspath__())
+        tract_lengths = np.genfromtxt(self.tract_lenghts_file.__fspath__())
+
+        dataset = StructuralDataset(orientations, areas, centers, weights, tract_lengths,
+                                    region_index_mapping.target_region_names)
         dataset.save_to_txt_zip(self.struct_zip_file)
 
         log.info('complete in %0.2fs', time.time() - tic)
