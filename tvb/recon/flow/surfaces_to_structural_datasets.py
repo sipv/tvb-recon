@@ -10,10 +10,13 @@ from ..cli import fs
 from .core import Flow
 from ..model.constants import FS_TO_CONN_INDICES_MAPPING_PATH
 from ..algo.structural_dataset import StructuralDataset
+from ..io.factory import IOUtils
 
 
 SUBCORTICAL_REG_INDS = ['008', '010', '011', '012', '013', '016', '017', '018', '026', '047', '049',
                         '050', '051', '052', '053', '054', '058']
+FS_LUT_LH_SHIFT = 1000
+FS_LUT_RH_SHIFT = 2000
 
 
 class Hemisphere(enum.Enum):
@@ -35,8 +38,8 @@ class RegionIndexMapping:
         self.region_names = []
         self.target_indices = []
         self.source_to_target = {}
-        self.target_region_names = []      # Names of the regions present (i.e. with nonzero index)
-                                           # in the target, sorted by indices"
+        self.target_region_names = []   # Names of the regions present (i.e. with nonzero index)
+                                        # in the target, sorted by indices"
 
         with open(filename, 'r') as f:
             for line in f.readlines():
@@ -180,7 +183,8 @@ def compute_region_centers(regions, vertices, region_mapping):
 
 class SurfacesToStructuralDataset(Flow):
 
-    def __init__(self, cort_surf_direc: os.PathLike, subcort_surf_direc: os.PathLike, struct_zip_file: os.PathLike):
+    def __init__(self, cort_surf_direc: os.PathLike, subcort_surf_direc: os.PathLike, label_direc: os.PathLike,
+                 struct_zip_file: os.PathLike):
         """
 
         Parameters
@@ -191,9 +195,14 @@ class SurfacesToStructuralDataset(Flow):
         subcort_surf_direc: Directory that should contain:
                               aseg_<NUM>.srf
                             for each <NUM> in SUBCORTICAL_REG_INDS
+        label_direc: Directory that should contain:
+                       rh.aparc.annot
+                       lh.aparc.annot
+        struct_zip_file: zip file containing TVB structural dataset to be created
         """
         self.cort_surf_direc = cort_surf_direc
         self.subcort_surf_direc = subcort_surf_direc
+        self.label_direc = label_direc
         self.struct_zip_file = struct_zip_file
 
     @staticmethod
@@ -241,29 +250,37 @@ class SurfacesToStructuralDataset(Flow):
         region_mappings = np.hstack([surf.region_mapping for surf in surfaces])
         return Surface(vertices, triangles, region_mappings)
 
-    def _get_cortical_surfaces(self, runner: Runner):
+    def _read_cortical_region_mapping(self, hemisphere: Hemisphere, fs_to_conn: RegionIndexMapping):
+        filename = os.path.join(self.label_direc, hemisphere + ".aparc.annot")
+        annot = IOUtils.read_annotation(filename)
+        region_mapping = annot.region_mapping
+
+        region_mapping[region_mapping == -1] = 0   # Unknown regions in hemispheres
+
+        # $FREESURFER_HOME/FreeSurferColorLUT.txt describes the shift
+        if hemisphere == Hemisphere.lh:
+            region_mapping += FS_LUT_LH_SHIFT
+        else:
+            region_mapping += FS_LUT_RH_SHIFT
+
+        fs_to_conn_fun = np.vectorize(lambda n: fs_to_conn.source_to_target[n])
+        region_mapping = fs_to_conn_fun(region_mapping)
+
+        return region_mapping
+
+    def _get_cortical_surfaces(self, runner: Runner, region_index_mapping: RegionIndexMapping):
         verts_l, triangs_l = self._pial_to_verts_and_triangs(
             runner, File(os.path.join(self.cort_surf_direc, Hemisphere.lh + ".pial")))
         verts_r, triangs_r = self._pial_to_verts_and_triangs(
             runner, File(os.path.join(self.cort_surf_direc, Hemisphere.rh + ".pial")))
 
-        region_mapping_l = self.magic()
-        region_mapping_r = self.magic()
+        region_mapping_l = self._read_cortical_region_mapping(Hemisphere.lh, region_index_mapping)
+        region_mapping_r = self._read_cortical_region_mapping(Hemisphere.rh, region_index_mapping)
 
         surface = self._unify_regions([Surface(verts_l, triangs_l, region_mapping_l),
                                        Surface(verts_r, triangs_r, region_mapping_r)])
 
         return surface
-
-    @staticmethod
-    def _read_fs_to_conn_indices_mapping(mapping_path):
-        fs_to_conn_indices_mapping = {}
-        with open(mapping_path, 'r') as fd:
-            for line in fd.readlines():
-                key, _, val = line.strip().split()
-                fs_to_conn_indices_mapping[int(key)] = int(val)
-
-        return fs_to_conn_indices_mapping
 
     @staticmethod
     def _compute_region_params(surface: Surface, subcortical: bool=False):
@@ -313,7 +330,7 @@ class SurfacesToStructuralDataset(Flow):
         region_index_mapping = RegionIndexMapping(FS_TO_CONN_INDICES_MAPPING_PATH)
 
         surf_subcort = self._get_subcortical_surfaces(region_index_mapping)
-        surf_cort = self._get_cortical_surfaces(runner)
+        surf_cort = self._get_cortical_surfaces(runner, region_index_mapping)
 
         region_params_subcort = self._compute_region_params(surf_subcort, True)
         region_params_cort = self._compute_region_params(surf_cort, False)
