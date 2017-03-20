@@ -9,13 +9,11 @@ from typing import List, Optional
 from tvb.recon.cli.runner import Runner, File
 from tvb.recon.cli import fs
 from tvb.recon.flow.core import Flow
-from tvb.recon.model.constants import FS_TO_CONN_INDICES_MAPPING_PATH
 from tvb.recon.algo.structural_dataset import StructuralDataset
 from tvb.recon.io.factory import IOUtils
 
 
-SUBCORTICAL_REG_INDS = ['008', '010', '011', '012', '013', '016', '017', '018', '026', '047', '049',
-                        '050', '051', '052', '053', '054', '058']
+SUBCORTICAL_REG_INDS = [8, 10, 11, 12, 13, 16, 17, 18, 26, 47, 49, 50, 51, 52, 53, 54, 58]
 FS_LUT_LH_SHIFT = 1000
 FS_LUT_RH_SHIFT = 2000
 
@@ -40,27 +38,49 @@ class Surface:
         self.region_mapping = region_mapping
 
 
-class RegionIndexMapping:
+class ColorLut:
     def __init__(self, filename: os.PathLike):
+        table = np.genfromtxt(os.fspath(filename), dtype=None)
 
-        self.source_indices = []
-        self.region_names = []
-        self.target_indices = []
-        self.source_to_target = {}
-        self.target_region_names = []   # Names of the regions present (i.e. with nonzero index)
-                                        # in the target, sorted by indices"
+        if len(table.dtype) == 6:
+            # id name R G B A
+            self.inds = table[table.dtype.names[0]]
+            self.names = table[table.dtype.names[1]].astype('U')
+            self.r = table[table.dtype.names[2]]
+            self.g = table[table.dtype.names[3]]
+            self.b = table[table.dtype.names[4]]
+            self.a = table[table.dtype.names[5]]
+            self.shortnames = np.zeros(len(self.names), dtype='U')
 
-        with open(filename, 'r') as f:
-            for line in f.readlines():
-                source_idx, region_name, target_idx = line.strip().split()
-                self.source_indices.append(int(source_idx))
-                self.region_names.append(region_name)
-                self.target_indices.append(int(target_idx))
+        elif len(table.dtype) == 7:
+            # id shortname name R G B A
+            self.inds = table[table.dtype.names[0]]
+            self.shortnames = table[table.dtype.names[1]].astype('U')
+            self.names = table[table.dtype.names[2]].astype('U')
+            self.r = table[table.dtype.names[3]]
+            self.g = table[table.dtype.names[4]]
+            self.b = table[table.dtype.names[5]]
+            self.a = table[table.dtype.names[6]]
 
-                self.source_to_target[int(source_idx)] = int(target_idx)
 
-        target_regions = [(idx, name) for idx, name in zip(self.target_indices, self.region_names) if idx >= 0]
-        self.target_region_names = [region[1] for region in sorted(target_regions)]
+class RegionIndexMapping:
+
+    def __init__(self, color_lut_src_file: os.PathLike, color_lut_trg_file: os.PathLike):
+        self.src_table = ColorLut(color_lut_src_file)
+        self.trg_table = ColorLut(color_lut_trg_file)
+
+        names_to_trg = dict(zip(self.trg_table.names, self.trg_table.inds))
+
+        self.src_to_trg = dict()
+        for src_ind, src_name in zip(self.src_table.inds, self.src_table.names):
+            trg_ind = names_to_trg.get(src_name, None)
+            if trg_ind is not None:
+                self.src_to_trg[src_ind] = trg_ind
+
+        self.unknown_ind = names_to_trg.get('Unknown', 0)   # zero as the default unknown area
+
+    def source_to_target(self, index):
+        return self.src_to_trg.get(index, self.unknown_ind)
 
 
 def merge_surfaces(surfaces: List[Surface]) -> Surface:
@@ -174,7 +194,7 @@ def compute_region_orientations(regions, vertex_normals, region_mapping):
 def compute_region_areas(regions, triangle_areas, vertex_triangles, region_mapping):
     """Compute the areas of given regions"""
 
-    region_surface_area = np.zeros((regions.size, 1))
+    region_surface_area = np.zeros(regions.size)
     avt = np.array(vertex_triangles)
     # NOTE: Slightly overestimates as it counts overlapping border triangles,
     #       but, not really a problem provided triangle-size << region-size.
@@ -198,7 +218,8 @@ def compute_region_centers(regions, vertices, region_mapping):
     return region_centers
 
 
-def compute_region_params(surface: Surface, subcortical: bool=False):
+def compute_region_params(surface: Surface, subcortical: bool=False)\
+        -> (np.ndarray, np.ndarray, np.ndarray, np.ndarray):
     verts, triangs, region_mapping = surface.vertices, surface.triangles, surface.region_mapping
 
     nverts = verts.shape[0]
@@ -235,7 +256,7 @@ def extract_vector(string: str, name: str) -> Optional[List[float]]:
         match = re.match(r"""^\s*
                          (.+?)              # name
                          \s*:\s*            # separator
-                         \(([0-9.,\s]+)\)   # vector: (x0, x1, ....)
+                         \(([0-9.,\s-]+)\)   # vector: (x0, x1, ....)
                          \s*$""",
                          line, re.X)
 
@@ -284,7 +305,7 @@ def read_cortical_region_mapping(label_direc: os.PathLike, hemisphere: Hemispher
     else:
         region_mapping += FS_LUT_RH_SHIFT
 
-    fs_to_conn_fun = np.vectorize(lambda n: fs_to_conn.source_to_target[n])
+    fs_to_conn_fun = np.vectorize(lambda n: fs_to_conn.source_to_target(n))
     region_mapping = fs_to_conn_fun(region_mapping)
 
     return region_mapping
@@ -310,8 +331,8 @@ def get_subcortical_surfaces(subcort_surf_direc: os.PathLike, region_index_mappi
     surfaces = []
 
     for fs_idx in SUBCORTICAL_REG_INDS:
-        conn_idx = region_index_mapping.source_to_target[fs_idx]
-        filename = os.path.join(subcort_surf_direc, 'aseg_' + fs_idx + '.srf')
+        conn_idx = region_index_mapping.source_to_target(fs_idx)
+        filename = os.path.join(subcort_surf_direc, 'aseg_%03d.srf' % fs_idx)
         with open(filename, 'r') as f:
             f.readline()
             nverts, ntriangs = [int(n) for n in f.readline().strip().split(' ')]
@@ -327,8 +348,15 @@ def get_subcortical_surfaces(subcort_surf_direc: os.PathLike, region_index_mappi
 
 class SurfacesToStructuralDataset(Flow):
 
-    def __init__(self, cort_surf_direc: os.PathLike, label_direc: os.PathLike, subcort_surf_direc: os.PathLike,
-                 weights_file: os.PathLike, tract_lengths_file: os.PathLike, struct_zip_file: os.PathLike):
+    def __init__(self,
+                 cort_surf_direc: os.PathLike,
+                 label_direc: os.PathLike,
+                 subcort_surf_direc: os.PathLike,
+                 source_lut: os.PathLike,
+                 target_lut: os.PathLike,
+                 weights_file: os.PathLike,
+                 tract_lengths_file: os.PathLike,
+                 struct_zip_file: os.PathLike):
         """
 
         Parameters
@@ -342,6 +370,8 @@ class SurfacesToStructuralDataset(Flow):
         subcort_surf_direc: Directory that should contain:
                               aseg_<NUM>.srf
                             for each <NUM> in SUBCORTICAL_REG_INDS
+        source_lut: File with the color look-up table used for the original parcellation
+        target_lut: File with the color look-up table used for the connectome generation
         weights_file: text file with weights matrix (which should be upper triangular)
         tract_lengths_file: text file with tract length matrix (which should be upper triangular)
         struct_zip_file: zip file containing TVB structural dataset to be created
@@ -349,16 +379,18 @@ class SurfacesToStructuralDataset(Flow):
         self.cort_surf_direc = cort_surf_direc
         self.subcort_surf_direc = subcort_surf_direc
         self.label_direc = label_direc
+        self.source_lut = source_lut
+        self.target_lut = target_lut
         self.weights_file = weights_file
         self.tract_lenghts_file = tract_lengths_file
         self.struct_zip_file = struct_zip_file
 
-    def run(self, runner: Runner):
+    def run(self, runner: Runner, include_unknown=False):
 
         log = logging.getLogger('SurfacesToStructuralDataset')
         tic = time.time()
 
-        region_index_mapping = RegionIndexMapping(FS_TO_CONN_INDICES_MAPPING_PATH)
+        region_index_mapping = RegionIndexMapping(self.source_lut, self.target_lut)
 
         surf_subcort = get_subcortical_surfaces(self.subcort_surf_direc, region_index_mapping)
         surf_cort = get_cortical_surfaces(runner, self.cort_surf_direc, self.label_direc, region_index_mapping)
@@ -366,23 +398,42 @@ class SurfacesToStructuralDataset(Flow):
         region_params_subcort = compute_region_params(surf_subcort, True)
         region_params_cort = compute_region_params(surf_cort, False)
 
-        # TODO: Unknown region 0: include or not?
-        max_reg = max(np.max(region_params_subcort[0]), np.max(region_params_cort[0]))
-        orientations = np.zeros(max_reg + 1, 3)
-        areas = np.zeros(max_reg + 1, 1)
-        centers = np.zeros(max_reg + 1, 3)
+        nregions = max(region_index_mapping.trg_table.inds) + 1
+        orientations = np.zeros((nregions, 3))
+        areas = np.zeros(nregions)
+        centers = np.zeros((nregions, 3))
+        cortical = np.zeros(nregions, dtype=bool)
 
-        for region_params in [region_params_subcort, region_params_cort]:
+        for region_params, is_cortical in [(region_params_subcort, False), (region_params_cort, True)]:
             regions, reg_areas, reg_orientations, reg_centers = region_params
             orientations[regions, :] = reg_orientations
             areas[regions] = reg_areas
             centers[regions, :] = reg_centers
+            cortical[regions] = is_cortical
 
-        weights = np.genfromtxt(self.weights_file.__fspath__())
-        tract_lengths = np.genfromtxt(self.tract_lenghts_file.__fspath__())
+        weights = np.genfromtxt(os.fspath(self.weights_file))
+        tract_lengths = np.genfromtxt(os.fspath(self.tract_lenghts_file))
 
-        dataset = StructuralDataset(orientations, areas, centers, weights, tract_lengths,
-                                    region_index_mapping.target_region_names)
+        if not include_unknown:
+            # Remove the region from orientations, areas and centers
+            indices = list(range(0, region_index_mapping.unknown_ind)) \
+                      + list(range(region_index_mapping.unknown_ind + 1, nregions))
+
+            names = region_index_mapping.trg_table.names[indices]
+            orientations = orientations[indices]
+            areas = areas[indices]
+            centers = centers[indices]
+            cortical = cortical[indices]
+        else:
+            # Add the region to weights and tract lengths
+            names = region_index_mapping.trg_table.names
+
+            np.insert(weights, region_index_mapping.unknown_ind, 0.0, axis=0)
+            np.insert(weights, region_index_mapping.unknown_ind, 0.0, axis=1)
+            np.insert(tract_lengths, region_index_mapping.unknown_ind, 0.0, axis=0)
+            np.insert(tract_lengths, region_index_mapping.unknown_ind, 0.0, axis=1)
+
+        dataset = StructuralDataset(orientations, areas, centers, cortical, weights, tract_lengths, names)
         dataset.save_to_txt_zip(self.struct_zip_file)
 
         log.info('complete in %0.2fs', time.time() - tic)

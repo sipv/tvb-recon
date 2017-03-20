@@ -1,15 +1,12 @@
 # -*- coding: utf-8 -*-
 
-import os
 import numpy as np
-from tvb.recon.tests.base import BaseTest, data_path
+from tvb.recon.tests.base import BaseTest
 
 import tvb.recon.flow.surfaces_to_structural_datasets as stsd
-from tvb.recon.flow.surfaces_to_structural_datasets import Surface, RegionIndexMapping
-from tvb.recon.cli.runner import SimpleRunner
+from tvb.recon.flow.surfaces_to_structural_datasets import Surface
 
 FLOAT_TOL = 1e-16
-
 
 class MinimalSurfaceTest(BaseTest):
 
@@ -65,27 +62,3 @@ class MinimalSurfaceTest(BaseTest):
         self.assertTrue(np.allclose(areas, [2.0], atol=FLOAT_TOL))
         self.assertTrue(np.allclose(orientations, np.array([1, 0, 1])*np.sqrt(2)/2, atol=FLOAT_TOL))
         self.assertTrue(np.allclose(centers, [0.25, 0.5, 0.25], atol=FLOAT_TOL))
-
-
-class CorticalSurfaceTest(BaseTest):
-
-    TEST_FS_SUBJECT = "freesurfer_fsaverage"
-    TEST_SURF_DIR = "surf"
-    TEST_LABEL_DIR = "label"
-    FS_TO_CONN_INDICES_MAPPING_PATH = "mapping_FS_88.txt"
-    NREGIONS = 88
-
-    def setUp(self):
-        super().setUp()
-        self.runner = SimpleRunner()
-
-    def test_get_cortical_surfaces(self):
-        cort_surf_direc = os.path.join(data_path, self.TEST_FS_SUBJECT, self.TEST_SURF_DIR)
-        label_direc = os.path.join(data_path, self.TEST_FS_SUBJECT, self.TEST_LABEL_DIR)
-        region_index_mapping = RegionIndexMapping(os.path.join(data_path, self.FS_TO_CONN_INDICES_MAPPING_PATH))
-
-        surf = stsd.get_cortical_surfaces(self.runner, cort_surf_direc, label_direc, region_index_mapping)
-        nverts = surf.vertices.shape[0]
-
-        self.assertTrue(((surf.triangles >= 0) & (surf.triangles <= nverts - 1)).all())
-        self.assertTrue(((surf.region_mapping >= 0) & (surf.region_mapping <= self.NREGIONS - 1)).all())
