@@ -8,7 +8,7 @@ from tvb.recon.flow.surfaces_to_structural_datasets import SurfacesToStructuralD
 from tvb.recon.cli.runner import SimpleRunner
 
 def main():
-    subjects_dir, subjid, source_lut, target_lut, weights_file, tract_lengths_file, out_file = sys.argv[1:]
+    subjects_dir, subjid, source_lut, target_lut, weights_file, tract_lengths_file, out_file, out_surf = sys.argv[1:]
 
     logging.basicConfig(level=logging.INFO)
     runner = SimpleRunner()
@@ -21,7 +21,8 @@ def main():
         target_lut,
         weights_file,
         tract_lengths_file,
-        out_file
+        out_file,
+        out_surf
     )
 
     flow.run(runner)

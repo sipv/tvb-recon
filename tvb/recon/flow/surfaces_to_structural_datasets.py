@@ -4,8 +4,11 @@ import os
 import os.path
 import logging
 import re
+import tempfile
 import time
 from typing import List, Optional
+from zipfile import ZipFile
+
 from tvb.recon.cli.runner import Runner, File
 from tvb.recon.cli import fs
 from tvb.recon.flow.core import Flow
@@ -36,6 +39,22 @@ class Surface:
         self.vertices = vertices
         self.triangles = triangles
         self.region_mapping = region_mapping
+
+    def save_surf_zip(self, filename):
+        tmpdir = tempfile.TemporaryDirectory()
+
+        file_vertices = os.path.join(tmpdir.name, 'vertices.txt')
+        file_triangles = os.path.join(tmpdir.name, 'triangles.txt')
+
+        np.savetxt(file_vertices, self.vertices, fmt='%.2f %.2f %.2f')
+        np.savetxt(file_triangles, self.triangles, fmt='%d %d %d')
+
+        with ZipFile(filename, 'w') as zip_file:
+            zip_file.write(file_vertices, os.path.basename(file_vertices))
+            zip_file.write(file_triangles, os.path.basename(file_triangles))
+
+    def save_region_mapping_txt(self, filename):
+        np.savetxt(filename, self.region_mapping, fmt="%d")
 
 
 class ColorLut:
@@ -356,7 +375,8 @@ class SurfacesToStructuralDataset(Flow):
                  target_lut: os.PathLike,
                  weights_file: os.PathLike,
                  tract_lengths_file: os.PathLike,
-                 struct_zip_file: os.PathLike):
+                 struct_zip_file: os.PathLike,
+                 out_surfaces_dir: os.PathLike=None):
         """
 
         Parameters
@@ -375,6 +395,7 @@ class SurfacesToStructuralDataset(Flow):
         weights_file: text file with weights matrix (which should be upper triangular)
         tract_lengths_file: text file with tract length matrix (which should be upper triangular)
         struct_zip_file: zip file containing TVB structural dataset to be created
+        out_surfaces_dir: directory where to put the surfaces and region mappings in TVB format
         """
         self.cort_surf_direc = cort_surf_direc
         self.subcort_surf_direc = subcort_surf_direc
@@ -384,6 +405,7 @@ class SurfacesToStructuralDataset(Flow):
         self.weights_file = weights_file
         self.tract_lenghts_file = tract_lengths_file
         self.struct_zip_file = struct_zip_file
+        self.out_surfaces_dir = out_surfaces_dir
 
     def run(self, runner: Runner, include_unknown=False):
 
@@ -394,6 +416,12 @@ class SurfacesToStructuralDataset(Flow):
 
         surf_subcort = get_subcortical_surfaces(self.subcort_surf_direc, region_index_mapping)
         surf_cort = get_cortical_surfaces(runner, self.cort_surf_direc, self.label_direc, region_index_mapping)
+
+        if self.out_surfaces_dir:
+            surf_subcort.save_region_mapping_txt(os.path.join(self.out_surfaces_dir, "region_mapping_subcort.txt"))
+            surf_subcort.save_surf_zip(os.path.join(self.out_surfaces_dir, "surface_subcort.zip"))
+            surf_cort.save_region_mapping_txt(os.path.join(self.out_surfaces_dir, "region_mapping_cort.txt"))
+            surf_cort.save_surf_zip(os.path.join(self.out_surfaces_dir, "surface_cort.zip"))
 
         region_params_subcort = compute_region_params(surf_subcort, True)
         region_params_cort = compute_region_params(surf_cort, False)
