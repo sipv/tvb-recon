@@ -22,7 +22,7 @@
 # parameters of image processing can be tuned while looking at the results.
 
 
-if [ -z "$SUBJECT" || -z "$CT" ]
+if [ -z "$SUBJECT" ] || [ -z "$CT" ]
 then
     echo "CT=/path/to/ct/data SUBJECT=fs_subject_name seeg-ct.sh"
     exit 1
@@ -69,8 +69,8 @@ label_with_dilation("masked_CT.nii", "dilated_CT.nii", "labeled_CT.nii")
 EOF
 
 echo compare labels to implantation schema
-echo mrview T1.nii.gz -overlay.load=dilated_CT.nii
-echo $open $implantation_pptx
+echo mrview T1.nii.gz -overlay.load labeled_CT.nii -overlay.interpolation_off -overlay.colourmap 3
+echo open implantation_pptx
 
 echo TODO and put correspondence in file
 echo labels w/o names will be ignored
@@ -105,4 +105,6 @@ with open("seeg_name_pos.txt", "w") as fd:
         for i, (x, y, z) in enumerate(xyz_pos):
             fd.write(fmt % (name, i, x, y, z))
 EOF
+
+popd
 
