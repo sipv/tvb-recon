@@ -40,18 +40,31 @@ class Surface:
         self.triangles = triangles
         self.region_mapping = region_mapping
 
+        self.nverts = self.vertices.shape[0]
+        self.ntriangs = self.triangles.shape[0]
+
+        self.vertex_triangles = compute_vertex_triangles(self.nverts, self.ntriangs, self.triangles)
+        self.triangle_normals = compute_triangle_normals(self.triangles, self.vertices)
+        self.triangle_angles = compute_triangle_angles(self.vertices, self.ntriangs, self.triangles)
+        self.vertex_normals = compute_vertex_normals(self.nverts, self.vertex_triangles, self.triangles,
+                                                     self.triangle_angles, self.triangle_normals, self.vertices)
+        self.triangle_areas = compute_triangle_areas(self.vertices, self.triangles)
+
     def save_surf_zip(self, filename):
         tmpdir = tempfile.TemporaryDirectory()
 
         file_vertices = os.path.join(tmpdir.name, 'vertices.txt')
         file_triangles = os.path.join(tmpdir.name, 'triangles.txt')
+        file_normals = os.path.join(tmpdir.name, 'normals.txt')
 
-        np.savetxt(file_vertices, self.vertices, fmt='%.2f %.2f %.2f')
+        np.savetxt(file_vertices, self.vertices, fmt='%.6f %.6f %.6f')
         np.savetxt(file_triangles, self.triangles, fmt='%d %d %d')
+        np.savetxt(file_normals, self.vertex_normals, fmt='%.6f %.6f %.6f')
 
         with ZipFile(filename, 'w') as zip_file:
             zip_file.write(file_vertices, os.path.basename(file_vertices))
             zip_file.write(file_triangles, os.path.basename(file_triangles))
+            zip_file.write(file_normals, os.path.basename(file_normals))
 
     def save_region_mapping_txt(self, filename):
         np.savetxt(filename, self.region_mapping, fmt="%d")
@@ -241,19 +254,9 @@ def compute_region_params(surface: Surface, subcortical: bool=False)\
         -> (np.ndarray, np.ndarray, np.ndarray, np.ndarray):
     verts, triangs, region_mapping = surface.vertices, surface.triangles, surface.region_mapping
 
-    nverts = verts.shape[0]
-    ntriangs = triangs.shape[0]
-
-    vertex_triangles = compute_vertex_triangles(nverts, ntriangs, triangs)
-    triangle_normals = compute_triangle_normals(triangs, verts)
-    triangle_angles = compute_triangle_angles(verts, ntriangs, triangs)
-    vertex_normals = compute_vertex_normals(nverts, vertex_triangles, triangs,
-                                            triangle_angles, triangle_normals, verts)
-    triangle_areas = compute_triangle_areas(verts, triangs)
-
     regions = np.unique(region_mapping)
-    areas = compute_region_areas(regions, triangle_areas, vertex_triangles, region_mapping)
-    orientations = compute_region_orientations(regions, vertex_normals, region_mapping)
+    areas = compute_region_areas(regions, surface.triangle_areas, surface.vertex_triangles, region_mapping)
+    orientations = compute_region_orientations(regions, surface.vertex_normals, region_mapping)
     centers = compute_region_centers(regions, verts, region_mapping)
 
     return regions, areas, orientations, centers
